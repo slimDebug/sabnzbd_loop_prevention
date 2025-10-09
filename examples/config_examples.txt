@@ -1,0 +1,96 @@
+# Example configurations for different notifiers
+
+# ============================================
+# Example 1: Gotify Configuration
+# ============================================
+{
+  "time_window_minutes": 1440,
+  "history_file": "/config/scripts/download_history.txt",
+  "log_file": "/config/scripts/loop_prevention.log",
+  "max_log_size_mb": 10,
+  "max_log_backups": 3,
+  "log_level": "ALL",
+  "verify_ssl": true,
+  "wants_raw_data": false,
+
+  "radarr_instances": [],
+  "sonarr_instances": [],
+
+  "notifier": {
+    "enabled": true,
+    "name": "Gotify",
+    "config_file": "/config/scripts/gotify_notifier.py",
+
+    // Gotify-specific fields
+    "url": "http://gotify:80",
+    "token": "your_gotify_token",
+    "priority": 8,
+    "markdown": true
+  }
+}
+
+# ============================================
+# Example 2: Discord Configuration
+# ============================================
+{
+  "time_window_minutes": 1440,
+  "history_file": "/config/scripts/download_history.txt",
+  "log_file": "/config/scripts/loop_prevention.log",
+  "max_log_size_mb": 10,
+  "max_log_backups": 3,
+  "log_level": "ALL",
+  "verify_ssl": true,
+  "wants_raw_data": false,
+
+  "radarr_instances": [],
+  "sonarr_instances": [],
+
+  "notifier": {
+    "enabled": true,
+    "name": "Discord",
+    "config_file": "/config/scripts/discord_notifier.py",
+
+    // Discord-specific fields (completely different!)
+    "webhook_url": "https://discord.com/api/webhooks/...",
+    "username": "Download Monitor",
+    "avatar_url": "https://example.com/avatar.png",
+    "embed_color": 15158332,
+    "mention_role_id": "123456789"
+  }
+}
+
+# ============================================
+# Example 3: Custom Notifier with Any Fields
+# ============================================
+{
+  "time_window_minutes": 1440,
+  "history_file": "/config/scripts/download_history.txt",
+  "log_file": "/config/scripts/loop_prevention.log",
+  "max_log_size_mb": 10,
+  "max_log_backups": 3,
+  "log_level": "ALL",
+  "verify_ssl": true,
+  "wants_raw_data": false,
+
+  "radarr_instances": [],
+  "sonarr_instances": [],
+
+  "notifier": {
+    "enabled": true,
+    "name": "MyCustomNotifier",
+    "config_file": "/config/scripts/my_custom_notifier.py",
+
+    // Add ANY custom fields your notifier needs!
+    "api_endpoint": "https://api.example.com/notify",
+    "api_key": "your_api_key",
+    "api_secret": "your_secret",
+    "timeout": 30,
+    "retry_count": 3,
+    "custom_field_1": "value1",
+    "custom_field_2": 12345,
+    "custom_array": ["item1", "item2"],
+    "custom_object": {
+      "nested_field": "value"
+    }
+  }
+}
