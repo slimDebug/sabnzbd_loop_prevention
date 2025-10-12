@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any
 from urllib.request import Request, urlopen
 
 # Import base class from shared library
-from loop_prevention_shared import NotifierInterface, Logger
+from loop_prevention_shared import NotifierInterface, Logger, LogLevel
 
 
 class GotifyNotifier(NotifierInterface):
@@ -43,13 +43,13 @@ class GotifyNotifier(NotifierInterface):
         self.logger = logger
         self.name = config.get("name", "Gotify")
 
-    def _log(self, message: str, level: str = "ERROR") -> None:
+    def _log(self, message: str, level: LogLevel = LogLevel.ERROR) -> None:
         """
         Internal logging method.
 
         Args:
             message: Message to log
-            level: Log level (default: "ERROR")
+            level: Log level (default: ERROR)
 
         Returns:
             None
@@ -57,14 +57,13 @@ class GotifyNotifier(NotifierInterface):
         if self.logger:
             self.logger.log(f"{self.name}: {message}", level)
 
-    def send_notification(self, title: str, message: str, priority: Optional[int] = None) -> bool:
+    def send_notification(self, title: str, message: str) -> bool:
         """
         Send a notification to Gotify server.
 
         Args:
             title: Notification title
             message: Notification message body (supports Markdown)
-            priority: Optional priority level (overrides default)
 
         Returns:
             True if notification was sent successfully, False otherwise
@@ -77,11 +76,10 @@ class GotifyNotifier(NotifierInterface):
             return False
 
         try:
-            notification_priority = priority if priority is not None else self.priority
             payload = {
                 "title": title,
                 "message": message,
-                "priority": notification_priority,
+                "priority": self.priority,
                 "extras": {
                     "client::display": {
                         "contentType": "text/markdown"
@@ -96,7 +94,7 @@ class GotifyNotifier(NotifierInterface):
             response = urlopen(req, data=data, timeout=10)
 
             if response.status == 200:
-                self._log("Notification sent successfully", "INFO")
+                self._log("Notification sent successfully", LogLevel.INFO)
                 return True
             else:
                 self._log(f"Unexpected response status: {response.status}")

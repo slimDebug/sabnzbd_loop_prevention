@@ -3,7 +3,7 @@
 Example Custom Notifier - Template for creating your own notifier
 """
 from typing import Optional, Dict, Any
-from loop_prevention_shared import NotifierInterface, Logger
+from loop_prevention_shared import NotifierInterface, Logger, LogLevel
 
 class CustomNotifier(NotifierInterface):
     def __init__(self, config: Dict[str, Any], logger: Optional[Logger] = None) -> None:
@@ -22,19 +22,18 @@ class CustomNotifier(NotifierInterface):
         self.your_field = config.get("your_field", "default_value")
         # Add as many fields as you need!
 
-    def _log(self, message: str, level: str = "ERROR") -> None:
+    def _log(self, message: str, level: LogLevel = LogLevel.INFO) -> None:
         """Log a message with the notifier name."""
         if self.logger:
             self.logger.log(f"{self.name}: {message}", level)
 
-    def send_notification(self, title: str, message: str, priority: Optional[int] = None) -> bool:
+    def send_notification(self, title: str, message: str) -> bool:
         """
         Send a notification.
 
         Args:
             title: Notification title
             message: Notification message body
-            priority: Optional priority level
 
         Returns:
             True if sent successfully, False otherwise
@@ -44,7 +43,7 @@ class CustomNotifier(NotifierInterface):
         try:
             # Your notification logic here
             # Example: HTTP POST, API call, etc.
-            self._log(f"Would send: {title}", "INFO")
+            self._log(f"Would send: {title}", LogLevel.INFO)
             return True
         except Exception as e:
             self._log(f"Error: {e}")

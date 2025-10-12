@@ -10,11 +10,26 @@
   "max_log_size_mb": 10,
   "max_log_backups": 3,
   "log_level": "ALL",
+  "ignored_categories": [],
+  "ignore_no_category": false,
   "verify_ssl": true,
+  "use_duplicate_key": true,
   "wants_raw_data": false,
 
-  "radarr_instances": [],
-  "sonarr_instances": [],
+  "radarr_instances": [
+    {
+      "category": "movies",  // SABnzbd category
+      "url": "http://radarr:7878",
+      "api_key": "your_radarr_api_key"
+    }
+  ],
+  "sonarr_instances": [
+    {
+      "category": "tv",  // SABnzbd category
+      "url": "http://sonarr:8989",
+      "api_key": "your_sonarr_api_key"
+    }
+  ],
 
   "notifier": {
     "enabled": true,
@@ -25,7 +40,6 @@
     "url": "http://gotify:80",
     "token": "your_gotify_token",
     "priority": 8,
-    "markdown": true
   }
 }
 
@@ -39,11 +53,26 @@
   "max_log_size_mb": 10,
   "max_log_backups": 3,
   "log_level": "ALL",
+  "ignored_categories": ["manual", "special"],
+  "ignore_no_category": false,
   "verify_ssl": true,
+  "use_duplicate_key": true,
   "wants_raw_data": false,
 
-  "radarr_instances": [],
-  "sonarr_instances": [],
+  "radarr_instances": [
+    {
+      "category": "movies",  // SABnzbd category
+      "url": "http://radarr:7878",
+      "api_key": "your_radarr_api_key"
+    }
+  ],
+  "sonarr_instances": [
+    {
+      "category": "tv",  // SABnzbd category
+      "url": "http://sonarr:8989",
+      "api_key": "your_sonarr_api_key"
+    }
+  ],
 
   "notifier": {
     "enabled": true,
@@ -69,11 +98,26 @@
   "max_log_size_mb": 10,
   "max_log_backups": 3,
   "log_level": "ALL",
+  "ignored_categories": ["special"],
+  "ignore_no_category": true,
   "verify_ssl": true,
+  "use_duplicate_key": true,
   "wants_raw_data": false,
 
-  "radarr_instances": [],
-  "sonarr_instances": [],
+  "radarr_instances": [
+    {
+      "category": "movies",  // SABnzbd category
+      "url": "http://radarr:7878",
+      "api_key": "your_radarr_api_key"
+    }
+  ],
+  "sonarr_instances": [
+    {
+      "category": "tv",  // SABnzbd category
+      "url": "http://sonarr:8989",
+      "api_key": "your_sonarr_api_key"
+    }
+  ],
 
   "notifier": {
     "enabled": true,

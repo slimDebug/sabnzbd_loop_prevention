@@ -135,13 +135,20 @@ Create a `prevent_download_loops.json` file (remove comments (starting with `//`
   // Logging configuration
   "max_log_size_mb": 10,
   "max_log_backups": 3,
-  "log_level": "ALL",  // Options: "ALL", "ERROR", "NONE"
+  "log_level": "ALL",  // Options: "ALL", "ERROR", "INFO", "NONE"
+
+  // Define ignored categories
+  "ignored_categories": ["manual", "special"],
+  "ignore_no_category": false,
 
   // SSL verification for *arr API calls
   "verify_ssl": true,
 
   // Pass all data we have to the notifier so you can build your own message
   "wants_raw_data": false,
+
+  // Do we want to use the duplicate key for matching?
+  "use_duplicate_key": true,
 
   // Radarr instances (for automatic blocklisting)
   "radarr_instances": [
@@ -182,8 +189,11 @@ Create a `prevent_download_loops.json` file (remove comments (starting with `//`
 | `log_file` | string | - | Path to log file |
 | `max_log_size_mb` | int | 10 | Max log file size before rotation |
 | `max_log_backups` | int | 3 | Number of rotated log files to keep |
-| `log_level` | string | "ALL" | Logging level: ALL, ERROR, or NONE |
+| `log_level` | string | "ALL" | Logging level: ALL, ERROR, INFO or NONE |
+| `ignored_categories` | array | [] | Categories that will be ignored |
+| `ignore_no_category` | bool | false | Specify if you want to ignore categoryless dowloads |
 | `verify_ssl` | bool | true | Verify SSL for *arr API calls |
+| `use_duplicate_key` | bool | true | Use the duplicate key for matching |
 | `wants_raw_data` | bool | false | Pass all data we have to the notifier |
 | `radarr_instances` | array | [] | List of Radarr configurations |
 | `sonarr_instances` | array | [] | List of Sonarr configurations |
@@ -236,7 +246,7 @@ Create a new Python file in the `notifiers/` directory (example notifier can be 
 Example Custom Notifier - Template for creating your own notifier
 """
 from typing import Optional, Dict, Any
-from loop_prevention_shared import NotifierInterface, Logger
+from loop_prevention_shared import NotifierInterface, Logger, LogLevel
 
 class CustomNotifier(NotifierInterface):
     def __init__(self, config: Dict[str, Any], logger: Optional[Logger] = None) -> None:
@@ -255,19 +265,18 @@ class CustomNotifier(NotifierInterface):
         self.your_field = config.get("your_field", "default_value")
         # Add as many fields as you need!
 
-    def _log(self, message: str, level: str = "ERROR") -> None:
+    def _log(self, message: str, level: LogLevel = LogLevel.INFO) -> None:
         """Log a message with the notifier name."""
         if self.logger:
             self.logger.log(f"{self.name}: {message}", level)
 
-    def send_notification(self, title: str, message: str, priority: Optional[int] = None) -> bool:
+    def send_notification(self, title: str, message: str) -> bool:
         """
         Send a notification.
 
         Args:
             title: Notification title
             message: Notification message body
-            priority: Optional priority level
 
         Returns:
             True if sent successfully, False otherwise
@@ -277,7 +286,7 @@ class CustomNotifier(NotifierInterface):
         try:
             # Your notification logic here
             # Example: HTTP POST, API call, etc.
-            self._log(f"Would send: {title}", "INFO")
+            self._log(f"Would send: {title}", LogLevel.INFO)
             return True
         except Exception as e:
             self._log(f"Error: {e}")
@@ -341,7 +350,7 @@ The notifier will be automatically loaded and used when loops are detected.
 import json
 from typing import Optional, Dict, Any
 from urllib.request import Request, urlopen
-from loop_prevention_shared import NotifierInterface, Logger
+from loop_prevention_shared import NotifierInterface, Logger, LogLevel
 
 
 class DiscordNotifier(NotifierInterface):
@@ -352,11 +361,11 @@ class DiscordNotifier(NotifierInterface):
         self.webhook_url = config.get("webhook_url", "")
         self.username = config.get("username", "SABnzbd Loop Prevention")
 
-    def _log(self, message: str, level: str = "ERROR") -> None:
+    def _log(self, message: str, level: LogLevel = LogLevel.ERROR) -> None:
         if self.logger:
             self.logger.log(f"{self.name}: {message}", level)
 
-    def send_notification(self, title: str, message: str, priority: Optional[int] = None) -> bool:
+    def send_notification(self, title: str, message: str) -> bool:
         if not self.enabled or not self.webhook_url:
             return False
 
