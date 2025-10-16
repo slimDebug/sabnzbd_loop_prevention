@@ -9,6 +9,7 @@ Uses shared library for common functionality
 import os
 import sys
 import time
+import traceback
 from datetime import datetime
 from typing import Dict, Any, Optional
 
@@ -239,7 +240,6 @@ class PostProcessLoopPrevention:
 
         except Exception as e:
             self.log(f"Error updating status: {e}", LogLevel.ERROR)
-            import traceback
             self.log(traceback.format_exc(), LogLevel.ERROR)
 
         return updated
@@ -347,7 +347,6 @@ if __name__ == "__main__":
         script.run()
 
     except Exception as e:
-        import traceback
         sys.stderr.write(f"CRITICAL ERROR: {e}{os.linesep}")
         sys.stderr.write(traceback.format_exc())
         sys.exit(0)  # Don't fail the download

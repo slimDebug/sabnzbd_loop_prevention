@@ -7,6 +7,7 @@ Contains common classes and utilities used by both pre-queue and post-processing
 
 import os
 import sys
+import time
 import json
 import fcntl
 import ssl
@@ -29,7 +30,7 @@ DEFAULT_CONFIG = {
     "ignore_no_category": False,
     "verify_ssl": True,
     "wants_raw_data": False,  # Enable raw data dictionary for notifications
-    "use_duplicate_key": True,
+    "use_duplicate_key": False,
     "radarr_instances": [],
     "sonarr_instances": [],
     "notifier": {
@@ -261,7 +262,6 @@ class Logger:
         if self.log_level == LogLevel.ERROR and level != LogLevel.ERROR:
             return
 
-        import time
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         log_line = f"[{timestamp}] [{level}] {message}{os.linesep}"
 

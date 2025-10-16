@@ -148,7 +148,7 @@ Create a `prevent_download_loops.json` file (remove comments (starting with `//`
   "wants_raw_data": false,
 
   // Do we want to use the duplicate key for matching?
-  "use_duplicate_key": true,
+  "use_duplicate_key": false,
 
   // Radarr instances (for automatic blocklisting)
   "radarr_instances": [
@@ -193,7 +193,7 @@ Create a `prevent_download_loops.json` file (remove comments (starting with `//`
 | `ignored_categories` | array | [] | Categories that will be ignored |
 | `ignore_no_category` | bool | false | Specify if you want to ignore categoryless dowloads |
 | `verify_ssl` | bool | true | Verify SSL for *arr API calls |
-| `use_duplicate_key` | bool | true | Use the duplicate key for matching |
+| `use_duplicate_key` | bool | false | Use the duplicate key for matching |
 | `wants_raw_data` | bool | false | Pass all data we have to the notifier |
 | `radarr_instances` | array | [] | List of Radarr configurations |
 | `sonarr_instances` | array | [] | List of Sonarr configurations |

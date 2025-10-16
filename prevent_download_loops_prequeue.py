@@ -9,8 +9,10 @@ Uses shared library for common functionality
 import os
 import sys
 import time
-from datetime import datetime
+import json
 import ssl
+import traceback
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, List, Dict, Any
 from urllib.request import Request, urlopen
 
@@ -219,7 +221,6 @@ class PreQueueLoopPrevention:
 
                 response = urlopen(req, timeout=10, context=self.ssl_context)
 
-                import json
                 data = json.loads(response.read().decode('utf-8'))
                 records = data.get('records', [])
 
@@ -265,39 +266,133 @@ class PreQueueLoopPrevention:
 
     def block_in_arr(self, url: str, api_key: str, arr_type: str) -> bool:
         """
-        Block the download in Radarr/Sonarr by removing from queue and adding to blocklist.
-
-        Args:
-            url: Base URL of the *arr instance
-            api_key: API key for authentication
-            arr_type: Type of *arr application ("Radarr" or "Sonarr")
-
-        Returns:
-            True if successfully blocked, False otherwise
+        Block the download in Radarr/Sonarr by adding to blocklist directly.
+        This works even when the item is not yet in the queue.
         """
-        self.log(f"Attempting to block in {arr_type}: {url}")
 
-        all_queue_items = self.get_all_queue_items(url, api_key)
-        if not all_queue_items:
-            self.log(f"No queue items in {arr_type}")
-            return False
-
-        queue_id = self.find_queue_item_id(all_queue_items, self.nzb_name)
-        if not queue_id:
-            self.log(f"Could not find queue item")
-            return False
+        self.log(f"Attempting to blocklist in {arr_type}: {url}")
 
         try:
+            # Strategy 1: Use 'since' parameter to get recent history (more efficient)
+            # Look back in the time window used for duplicate detection
+            since_time = datetime.now(timezone.utc) - timedelta(minutes=self.time_window_minutes)
+            since_str = since_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+            self.log(f"Searching history since {since_str}")
+            history_url = f"{url}/api/v3/history/since?date={since_str}&eventType=grabbed"
+            req = Request(history_url)
+            req.add_header('X-Api-Key', api_key)
+
+            try:
+                response = urlopen(req, timeout=10, context=self.ssl_context)
+                data = json.loads(response.read().decode('utf-8'))
+                records = data if isinstance(data, list) else data.get('records', [])
+
+                self.log(f"Found {len(records)} grabbed items in history")
+
+                # Look for matching item in history
+                history_id = None
+                for record in records:
+                    download_id = record.get('downloadId', '')
+                    title = record.get('sourceTitle', '')
+
+                    # Try to match by title or duplicate key
+                    if self.duplicate_key and download_id == self.duplicate_key:
+                        history_id = record.get('id')
+                        self.log(f"Found in history by duplicate_key: {download_id}")
+                        break
+                    elif title == self.nzb_name:
+                        history_id = record.get('id')
+                        self.log(f"Found in history by title: {title}")
+                        break
+
+                if history_id:
+                    # Add to blocklist via history endpoint
+                    blocklist_url = f"{url}/api/v3/history/failed/{history_id}"
+                    req = Request(blocklist_url, method='POST', data=b'')
+                    req.add_header('X-Api-Key', api_key)
+                    req.add_header('Content-Type', 'application/json')
+                    urlopen(req, timeout=10, context=self.ssl_context)
+                    self.log(f"Added to blocklist in {arr_type} (History ID: {history_id})")
+                    return True
+
+            except Exception as e:
+                self.log(f"Error with 'since' API, trying paginated search: {e}", LogLevel.WARNING)
+
+            # Strategy 2: Fallback to paginated search if 'since' doesn't work
+            self.log("Trying paginated history search")
+            page_size = 1000  # Items per page (check up to 50,000 total)
+            max_pages = 50    # Maximum number of pages to check
+            page = 1
+
+            while page <= max_pages:
+                history_url = f"{url}/api/v3/history?page={page}&pageSize={page_size}&eventType=grabbed&sortKey=date&sortDir=desc"
+                req = Request(history_url)
+                req.add_header('X-Api-Key', api_key)
+                response = urlopen(req, timeout=10, context=self.ssl_context)
+                data = json.loads(response.read().decode('utf-8'))
+
+                records = data.get('records', [])
+                total_records = data.get('totalRecords', 0)
+
+                if not records:
+                    self.log(f"No more records on page {page}")
+                    break
+
+                self.log(f"Checking page {page}/{max_pages}: {len(records)} records (total in history: {total_records})")
+
+                # Look for matching item
+                history_id = None
+                for record in records:
+                    download_id = record.get('downloadId', '')
+                    title = record.get('sourceTitle', '')
+
+                    if self.duplicate_key and download_id == self.duplicate_key:
+                        history_id = record.get('id')
+                        self.log(f"Found in history by duplicate_key on page {page}")
+                        break
+                    elif title == self.nzb_name:
+                        history_id = record.get('id')
+                        self.log(f"Found in history by title on page {page}")
+                        break
+
+                if history_id:
+                    # Add to blocklist via history endpoint
+                    blocklist_url = f"{url}/api/v3/history/failed/{history_id}"
+                    req = Request(blocklist_url, method='POST', data=b'')
+                    req.add_header('X-Api-Key', api_key)
+                    req.add_header('Content-Type', 'application/json')
+                    urlopen(req, timeout=10, context=self.ssl_context)
+                    self.log(f"Added to blocklist in {arr_type} (History ID: {history_id})")
+                    return True
+
+                page += 1
+
+            self.log(f"Could not find in history after checking {max_pages} pages ({page_size * max_pages} items)")
+
+            # Strategy 3: Final fallback - try the queue method (original approach)
+            self.log("Trying queue-based blocking as final fallback")
+            all_queue_items = self.get_all_queue_items(url, api_key)
+            if not all_queue_items:
+                self.log(f"No queue items in {arr_type}")
+                return False
+
+            queue_id = self.find_queue_item_id(all_queue_items, self.nzb_name)
+            if not queue_id:
+                self.log(f"Could not find queue item - all blocking strategies failed")
+                return False
+
+            # Delete from queue and add to blocklist
             delete_url = f"{url}/api/v3/queue/{queue_id}?removeFromClient=true&blocklist=true"
             req = Request(delete_url, method='DELETE')
             req.add_header('X-Api-Key', api_key)
             urlopen(req, timeout=10, context=self.ssl_context)
-
-            self.log(f"Blocked in {arr_type} (Queue ID: {queue_id})")
+            self.log(f"Blocked in {arr_type} via queue (Queue ID: {queue_id})")
             return True
 
         except Exception as e:
             self.log(f"Error blocking: {e}", LogLevel.ERROR)
+            self.log(traceback.format_exc(), LogLevel.ERROR)
             return False
 
     def try_block_in_instances(self, instances: List[Dict[str, Any]], app_name: str) -> Tuple[bool, Optional[str]]:
@@ -473,7 +568,6 @@ if __name__ == "__main__":
         script.run()
 
     except Exception as e:
-        import traceback
         sys.stderr.write(f"CRITICAL ERROR: {e}{os.linesep}")
         sys.stderr.write(traceback.format_exc())
         sys.exit(1)
