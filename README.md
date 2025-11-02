@@ -84,6 +84,7 @@ For Docker deployments (recommended structure):
 mkdir -p /config/scripts/loop_prevention
 cp prevent_download_loops_prequeue.py /config/scripts/loop_prevention/
 cp prevent_download_loops_postprocess.py /config/scripts/loop_prevention/
+cp queue_blocker_task.py /config/scripts/loop_prevention/
 cp loop_prevention_shared.py /config/scripts/loop_prevention/
 mkdir -p /config/scripts/loop_prevention/notifiers
 cp notifiers/your_custom_notifier.py /config/scripts/loop_prevention/notifiers/
@@ -398,6 +399,7 @@ Recommended structure for Docker deployments:
 /config/scripts/loop_prevention/
 ├── prevent_download_loops_prequeue.py
 ├── prevent_download_loops_postprocess.py
+├── queue_blocker_task.py
 ├── loop_prevention_shared.py
 ├── notifiers/
 │   ├── gotify_notifier.py

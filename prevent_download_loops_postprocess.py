@@ -15,7 +15,7 @@ from typing import Dict, Any, Optional
 
 # Import shared library
 from loop_prevention_shared import (
-    ConfigLoader, LockedFile, Logger, LogLevel, NotifierInterface, create_notifier, ensure_file_exists
+    ConfigLoader, LockedFile, Logger, LogLevel, DownloadStatus, NotifierInterface, create_notifier, ensure_file_exists
 )
 
 
@@ -178,10 +178,10 @@ class PostProcessLoopPrevention:
         """
         # Determine final status
         if self.status == '0':
-            final_status = "SUCCESS"
+            final_status = DownloadStatus.SUCCESS.value
             self.log(f"[POST-PROCESS] Download completed successfully")
         else:
-            final_status = "FAILED"
+            final_status = DownloadStatus.FAILED.value
             self.log(f"[POST-PROCESS] Download failed (code {self.status})")
 
         # Log all available identifiers for debugging
@@ -215,12 +215,12 @@ class PostProcessLoopPrevention:
                 self.log(f"Line {line_num}: Checking '{name}' (status: {status})")
 
                 # Check if this entry matches
-                if self._is_match(name, dupe_key) and status == "PENDING" and not updated:
+                if self._is_match(name, dupe_key) and status == DownloadStatus.PENDING.value and not updated:
                     # Update status (keep original timestamp, category, name, key)
                     new_line = f"{timestamp}|{category}|{name}|{dupe_key}|{final_status}{os.linesep}"
                     new_lines.append(new_line)
                     updated = True
-                    self.log(f"✅ UPDATED Line {line_num}: PENDING -> {final_status}")
+                    self.log(f"✅ UPDATED Line {line_num}: {DownloadStatus.PENDING.value} -> {final_status}")
                 else:
                     new_lines.append(line)
 
@@ -229,7 +229,7 @@ class PostProcessLoopPrevention:
                 f.writelines(new_lines)
 
             if not updated:
-                self.log("⚠️ WARNING: No matching PENDING entry found!", LogLevel.ERROR)
+                self.log(f"⚠️ WARNING: No matching {DownloadStatus.PENDING.value} entry found!", LogLevel.ERROR)
                 self.log("This usually means:", LogLevel.ERROR)
                 self.log("  1. Pre-queue script didn't run (check SABnzbd config)", LogLevel.ERROR)
                 self.log("  2. Name/key mismatch between pre-queue and post-process", LogLevel.ERROR)
@@ -260,10 +260,10 @@ class PostProcessLoopPrevention:
         # Determine status and icon
         if self.status == '0':
             title = "✅ Download Completed"
-            final_status = "SUCCESS"
+            final_status = DownloadStatus.SUCCESS.value
         else:
             title = "❌ Download Failed"
-            final_status = "FAILED"
+            final_status = DownloadStatus.FAILED.value
 
         message_parts = [
             f"**Download:** `{self.nzb_name}`",

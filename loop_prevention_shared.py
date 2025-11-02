@@ -46,10 +46,20 @@ DEFAULT_CONFIG = {
 # ===== SHARED CLASSES =====
 class LogLevel(Enum):
     """Enumeration for log levels."""
+    DEBUG = "DEBUG"
     INFO = "INFO"
+    WARNING = "WARNING"
     ERROR = "ERROR"
     ALL = "ALL"
     NONE = "NONE"
+
+
+class DownloadStatus(Enum):
+    """Enumeration for download status in history."""
+
+    PENDING = "PENDING"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
 
 
 class ConfigLoader:
@@ -251,19 +261,38 @@ class Logger:
 
         Args:
             message: Log message to write
-            level: Log level ('INFO', 'ERROR', etc.)
+            level: Log level ('DEBUG', 'INFO', 'WARNING', 'ERROR', etc.)
 
         Returns:
             None
         """
+        # Define log level hierarchy (lower index = higher priority/severity)
+        log_hierarchy = {
+            LogLevel.DEBUG: 0,
+            LogLevel.INFO: 1,
+            LogLevel.WARNING: 2,
+            LogLevel.ERROR: 3,
+        }
+
+        # Check if this message should be logged
         if self.log_level == LogLevel.NONE:
             return
 
-        if self.log_level == LogLevel.ERROR and level != LogLevel.ERROR:
-            return
+        if self.log_level == LogLevel.ALL:
+            # Log everything
+            pass
+        else:
+            # Check if message level meets the configured threshold
+            message_level_priority = log_hierarchy.get(level, 1)
+            config_level_priority = log_hierarchy.get(self.log_level, 1)
+
+            # Only log if message priority >= configured priority
+            # (higher severity messages always log)
+            if message_level_priority < config_level_priority:
+                return
 
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-        log_line = f"[{timestamp}] [{level}] {message}{os.linesep}"
+        log_line = f"[{timestamp}] [{level.value}] {message}{os.linesep}"
 
         try:
             self._rotate_log()

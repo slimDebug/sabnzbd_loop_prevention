@@ -2,7 +2,10 @@
 
 """
 SABnzbd Download Loop Prevention - PRE-QUEUE Script
-Checks for duplicate downloads and blocks loops
+
+Checks for duplicate downloads and blocks loops.
+Uses background subprocess to handle blocking asynchronously.
+
 Uses shared library for common functionality
 """
 
@@ -12,13 +15,13 @@ import time
 import json
 import ssl
 import traceback
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple, List, Dict, Any
+import subprocess
+from typing import Optional, Dict, Any
 from urllib.request import Request, urlopen
 
 # Import shared library
 from loop_prevention_shared import (
-    ConfigLoader, LockedFile, Logger, LogLevel, NotifierInterface, create_notifier,
+    ConfigLoader, LockedFile, Logger, LogLevel, DownloadStatus, NotifierInterface, create_notifier,
     ensure_file_exists, clean_old_entries
 )
 
@@ -28,36 +31,11 @@ class PreQueueLoopPrevention:
     Pre-queue script to prevent download loops in SABnzbd.
 
     Checks for duplicate downloads before they are added to the queue and
-    can optionally block them in Radarr/Sonarr if detected.
-
-    Attributes:
-        config (dict): Configuration dictionary
-        current_time (int): Current Unix timestamp
-        time_window_minutes (int): Time window for duplicate detection in minutes
-        time_window_seconds (int): Time window in seconds
-        history_file (str): Path to download history file
-        verify_ssl (bool): Whether to verify SSL certificates
-        radarr_instances (list): List of Radarr instance configurations
-        sonarr_instances (list): List of Sonarr instance configurations
-        use_duplicate_key (str): Whether to use the duplicate key for matching
-        wants_raw_data (bool): Whether to send raw data to notifier
-        logger (Logger): Logger instance
-        notifier (NotifierInterface): Notifier instance
-        nzb_name (str): Name of the NZB from SABnzbd environment
-        category (str): Category from SABnzbd environment
-        duplicate_key (str): Duplicate key from SABnzbd environment
-        ssl_context: SSL context for HTTPS requests
-        duplicate_timestamp (int): Timestamp of duplicate entry
-        duplicate_status (str): Status of duplicate entry
+    uses background subprocess to block them via the queue endpoint.
     """
 
     def __init__(self, config: Dict[str, Any]) -> None:
-        """
-        Initialize the PreQueueLoopPrevention script.
-
-        Args:
-            config: Configuration dictionary
-        """
+        """Initialize the PreQueueLoopPrevention script."""
         self.config = config
         self.current_time = int(time.time())
 
@@ -67,8 +45,8 @@ class PreQueueLoopPrevention:
         self.history_file = config.get("history_file")
         self.verify_ssl = config.get("verify_ssl")
         self.use_duplicate_key = config.get("use_duplicate_key", True)
-        self.radarr_instances = config.get("radarr_instances")
-        self.sonarr_instances = config.get("sonarr_instances")
+        self.radarr_instances = config.get("radarr_instances", [])
+        self.sonarr_instances = config.get("sonarr_instances", [])
         self.wants_raw_data = config.get("wants_raw_data", False)
 
         # Initialize shared components
@@ -79,7 +57,7 @@ class PreQueueLoopPrevention:
             config.get("log_level")
         )
 
-        # Initialize notifier using factory
+        # Initialize notifier
         self.notifier = create_notifier(config.get("notifier", {}), self.logger)
 
         # Get SABnzbd environment variables
@@ -87,11 +65,12 @@ class PreQueueLoopPrevention:
         self.category = os.environ.get('SAB_CAT', '')
         self.duplicate_key = os.environ.get('SAB_DUPLICATE_KEY', '')
 
+        # Get SABnzbd API URL and key
+        self.sabnzbd_api_url = os.environ.get('SAB_API_URL', 'http://localhost:8080/api')
+        self.sabnzbd_api_key = os.environ.get('SAB_API_KEY', '')
+
         # Create SSL context
-        if self.verify_ssl:
-            self.ssl_context = ssl.create_default_context()
-        else:
-            self.ssl_context = ssl._create_unverified_context()
+        self._setup_ssl_context()
 
         # Track duplicate info for notifications
         self.duplicate_timestamp = None
@@ -99,39 +78,35 @@ class PreQueueLoopPrevention:
 
         ensure_file_exists(self.history_file)
 
+        self.log(f"SABnzbd API URL: {self.sabnzbd_api_url} (API Key: {'***' if self.sabnzbd_api_key else 'NOT SET'})")
+
+    def _setup_ssl_context(self) -> None:
+        """Setup SSL context based on verify_ssl configuration."""
+        try:
+            if self.verify_ssl:
+                self.ssl_context = ssl.create_default_context()
+                self.logger.log("SSL verification enabled (verified certs only)", LogLevel.INFO)
+            else:
+                self.ssl_context = ssl._create_unverified_context()
+                self.logger.log("SSL verification disabled (self-signed certs allowed)", LogLevel.INFO)
+        except Exception as e:
+            self.logger.log(f"Error setting up SSL context: {e}", LogLevel.ERROR)
+            self.ssl_context = ssl._create_unverified_context()
+
     def log(self, message: str, level: LogLevel = LogLevel.INFO) -> None:
-        """
-        Log a message using the logger.
-
-        Args:
-            message: Message to log
-            level: Log level (default: INFO)
-
-        Returns:
-            None
-        """
+        """Log a message using the logger."""
         self.logger.log(message, level)
 
     def add_to_history(self) -> None:
-        """
-        Add download with PENDING status to history file.
-
-        Returns:
-            None
-        """
+        """Add download with PENDING status to history file."""
         try:
             with LockedFile(self.history_file, 'a') as f:
-                f.write(f"{self.current_time}|{self.category}|{self.nzb_name}|{self.duplicate_key}|PENDING{os.linesep}")
+                f.write(f"{self.current_time}|{self.category}|{self.nzb_name}|{self.duplicate_key}|{DownloadStatus.PENDING.value}{os.linesep}")
         except Exception as e:
             self.log(f"Error adding to history: {e}", LogLevel.ERROR)
 
     def check_duplicate(self) -> bool:
-        """
-        Check if download already exists with PENDING or SUCCESS status.
-
-        Returns:
-            True if duplicate is found and should be blocked, False otherwise
-        """
+        """Check if download already exists with PENDING or SUCCESS status."""
         try:
             with LockedFile(self.history_file, 'r') as f:
                 lines = f.readlines()
@@ -166,14 +141,14 @@ class PreQueueLoopPrevention:
                 if age < self.time_window_seconds:
                     self.log(f"DUPLICATE: Found with status '{status}' from {age // 60} min ago")
 
-                    if status == "SUCCESS":
-                        self.log("Status is SUCCESS - BLOCKING")
+                    if status == DownloadStatus.SUCCESS.value:
+                        self.log(f"Status is {DownloadStatus.SUCCESS.value} - BLOCKING")
                         return True
-                    elif status == "PENDING":
-                        self.log("Status is PENDING - BLOCKING (download in progress)")
+                    elif status == DownloadStatus.PENDING.value:
+                        self.log(f"Status is {DownloadStatus.PENDING.value} - BLOCKING (download in progress)")
                         return True
-                    elif status == "FAILED":
-                        self.log("Status is FAILED - ALLOWING retry")
+                    elif status == DownloadStatus.FAILED.value:
+                        self.log(f"Status is {DownloadStatus.FAILED.value} - ALLOWING retry")
                         return False
                     else:
                         self.log(f"Unknown status '{status}' - BLOCKING")
@@ -181,262 +156,15 @@ class PreQueueLoopPrevention:
 
         return False
 
-    def find_instance_by_category(self, instances: List[Dict[str, Any]], category: str) -> Tuple[Optional[str], Optional[str]]:
-        """
-        Find instance configuration by category.
-
-        Args:
-            instances: List of instance configurations
-            category: Category to match
-
-        Returns:
-            Tuple of (url, api_key) or (None, None) if not found
-        """
-        for instance in instances:
-            if instance.get("category") == category:
-                return instance.get("url"), instance.get("api_key")
-        return None, None
-
-    def get_all_queue_items(self, url: str, api_key: str) -> List[Dict[str, Any]]:
-        """
-        Fetch all queue items from Radarr/Sonarr API with pagination.
-
-        Args:
-            url: Base URL of the *arr instance
-            api_key: API key for authentication
-
-        Returns:
-            List of queue item dictionaries
-        """
-        all_records = []
-        page = 1
-        page_size = 1000
-
-        while page <= 50:
-            try:
-                req_url = f"{url}/api/v3/queue?page={page}&pageSize={page_size}"
-                req = Request(req_url)
-                req.add_header('X-Api-Key', api_key)
-                req.add_header('Content-Type', 'application/json')
-
-                response = urlopen(req, timeout=10, context=self.ssl_context)
-
-                data = json.loads(response.read().decode('utf-8'))
-                records = data.get('records', [])
-
-                if not records:
-                    break
-
-                all_records.extend(records)
-
-                if len(records) < page_size:
-                    break
-
-                page += 1
-
-            except Exception as e:
-                self.log(f"Error fetching queue: {e}", LogLevel.ERROR)
-                break
-
-        return all_records
-
-    def find_queue_item_id(self, queue_items: List[Dict[str, Any]], title: str) -> Optional[int]:
-        """
-        Find queue item ID by title or download ID.
-
-        Args:
-            queue_items: List of queue item dictionaries
-            title: Title to search for
-
-        Returns:
-            Queue item ID or None if not found
-        """
-        # Exact match first
-        for item in queue_items:
-            if item.get('title') == title or item.get('downloadId') == title:
-                return item.get('id')
-
-        # Partial match fallback
-        for item in queue_items:
-            item_title = item.get('title', '')
-            if title in item_title or item_title in title:
-                return item.get('id')
-
-        return None
-
-    def block_in_arr(self, url: str, api_key: str, arr_type: str) -> bool:
-        """
-        Block the download in Radarr/Sonarr by adding to blocklist directly.
-        This works even when the item is not yet in the queue.
-        """
-
-        self.log(f"Attempting to blocklist in {arr_type}: {url}")
-
-        try:
-            # Strategy 1: Use 'since' parameter to get recent history (more efficient)
-            # Look back in the time window used for duplicate detection
-            since_time = datetime.now(timezone.utc) - timedelta(minutes=self.time_window_minutes)
-            since_str = since_time.strftime('%Y-%m-%dT%H:%M:%SZ')
-
-            self.log(f"Searching history since {since_str}")
-            history_url = f"{url}/api/v3/history/since?date={since_str}&eventType=grabbed"
-            req = Request(history_url)
-            req.add_header('X-Api-Key', api_key)
-
-            try:
-                response = urlopen(req, timeout=10, context=self.ssl_context)
-                data = json.loads(response.read().decode('utf-8'))
-                records = data if isinstance(data, list) else data.get('records', [])
-
-                self.log(f"Found {len(records)} grabbed items in history")
-
-                # Look for matching item in history
-                history_id = None
-                for record in records:
-                    download_id = record.get('downloadId', '')
-                    title = record.get('sourceTitle', '')
-
-                    # Try to match by title or duplicate key
-                    if self.duplicate_key and download_id == self.duplicate_key:
-                        history_id = record.get('id')
-                        self.log(f"Found in history by duplicate_key: {download_id}")
-                        break
-                    elif title == self.nzb_name:
-                        history_id = record.get('id')
-                        self.log(f"Found in history by title: {title}")
-                        break
-
-                if history_id:
-                    # Add to blocklist via history endpoint
-                    blocklist_url = f"{url}/api/v3/history/failed/{history_id}"
-                    req = Request(blocklist_url, method='POST', data=b'')
-                    req.add_header('X-Api-Key', api_key)
-                    req.add_header('Content-Type', 'application/json')
-                    urlopen(req, timeout=10, context=self.ssl_context)
-                    self.log(f"Added to blocklist in {arr_type} (History ID: {history_id})")
-                    return True
-
-            except Exception as e:
-                self.log(f"Error with 'since' API, trying paginated search: {e}", LogLevel.WARNING)
-
-            # Strategy 2: Fallback to paginated search if 'since' doesn't work
-            self.log("Trying paginated history search")
-            page_size = 1000  # Items per page (check up to 50,000 total)
-            max_pages = 50    # Maximum number of pages to check
-            page = 1
-
-            while page <= max_pages:
-                history_url = f"{url}/api/v3/history?page={page}&pageSize={page_size}&eventType=grabbed&sortKey=date&sortDir=desc"
-                req = Request(history_url)
-                req.add_header('X-Api-Key', api_key)
-                response = urlopen(req, timeout=10, context=self.ssl_context)
-                data = json.loads(response.read().decode('utf-8'))
-
-                records = data.get('records', [])
-                total_records = data.get('totalRecords', 0)
-
-                if not records:
-                    self.log(f"No more records on page {page}")
-                    break
-
-                self.log(f"Checking page {page}/{max_pages}: {len(records)} records (total in history: {total_records})")
-
-                # Look for matching item
-                history_id = None
-                for record in records:
-                    download_id = record.get('downloadId', '')
-                    title = record.get('sourceTitle', '')
-
-                    if self.duplicate_key and download_id == self.duplicate_key:
-                        history_id = record.get('id')
-                        self.log(f"Found in history by duplicate_key on page {page}")
-                        break
-                    elif title == self.nzb_name:
-                        history_id = record.get('id')
-                        self.log(f"Found in history by title on page {page}")
-                        break
-
-                if history_id:
-                    # Add to blocklist via history endpoint
-                    blocklist_url = f"{url}/api/v3/history/failed/{history_id}"
-                    req = Request(blocklist_url, method='POST', data=b'')
-                    req.add_header('X-Api-Key', api_key)
-                    req.add_header('Content-Type', 'application/json')
-                    urlopen(req, timeout=10, context=self.ssl_context)
-                    self.log(f"Added to blocklist in {arr_type} (History ID: {history_id})")
-                    return True
-
-                page += 1
-
-            self.log(f"Could not find in history after checking {max_pages} pages ({page_size * max_pages} items)")
-
-            # Strategy 3: Final fallback - try the queue method (original approach)
-            self.log("Trying queue-based blocking as final fallback")
-            all_queue_items = self.get_all_queue_items(url, api_key)
-            if not all_queue_items:
-                self.log(f"No queue items in {arr_type}")
-                return False
-
-            queue_id = self.find_queue_item_id(all_queue_items, self.nzb_name)
-            if not queue_id:
-                self.log(f"Could not find queue item - all blocking strategies failed")
-                return False
-
-            # Delete from queue and add to blocklist
-            delete_url = f"{url}/api/v3/queue/{queue_id}?removeFromClient=true&blocklist=true"
-            req = Request(delete_url, method='DELETE')
-            req.add_header('X-Api-Key', api_key)
-            urlopen(req, timeout=10, context=self.ssl_context)
-            self.log(f"Blocked in {arr_type} via queue (Queue ID: {queue_id})")
-            return True
-
-        except Exception as e:
-            self.log(f"Error blocking: {e}", LogLevel.ERROR)
-            self.log(traceback.format_exc(), LogLevel.ERROR)
-            return False
-
-    def try_block_in_instances(self, instances: List[Dict[str, Any]], app_name: str) -> Tuple[bool, Optional[str]]:
-        """
-        Try to block download in configured instances.
-
-        Args:
-            instances: List of instance configurations
-            app_name: Application name ("Radarr" or "Sonarr")
-
-        Returns:
-            Tuple of (success, instance_info_string)
-        """
-        url, api_key = self.find_instance_by_category(instances, self.category)
-        if url and api_key:
-            if self.block_in_arr(url, api_key, app_name):
-                return True, f"{app_name} - {self.category} ({url})"
-        return False, None
-
-    def _get_all_env_vars(self) -> Dict[str, str]:
-        """
-        Get all SABnzbd-related environment variables.
-
-        Returns:
-            Dictionary of all SAB_* environment variables
-        """
-        return {key: value for key, value in os.environ.items() if key.startswith('SAB_')}
-
-    def send_block_notification(self, blocked_instance: Optional[str] = None) -> None:
-        """
-        Send notification about blocked download.
-
-        Args:
-            blocked_instance: Optional string describing where the download was blocked
-
-        Returns:
-            None
-        """
+    def send_block_notification(self) -> None:
+        """Send notification about blocked download."""
         if not self.notifier:
             return
 
         title = "🚫 Download Loop Prevented"
 
         if self.duplicate_timestamp:
+            from datetime import datetime
             original_time = datetime.fromtimestamp(self.duplicate_timestamp).strftime('%Y-%m-%d %H:%M:%S')
             minutes_ago = (self.current_time - self.duplicate_timestamp) // 60
         else:
@@ -453,18 +181,14 @@ class PreQueueLoopPrevention:
 
         message_parts.append(f"**First Seen:** {original_time} ({minutes_ago} min ago)")
         message_parts.append(f"**Status:** {self.duplicate_status}")
-
-        if blocked_instance:
-            message_parts.append(f"**Blocked In:** {blocked_instance}")
-        else:
-            message_parts.append(f"**Action:** Download refused at SABnzbd")
-
+        message_parts.append(f"**Action:** Background subprocess blocking (pause + queue removal)")
         message_parts.append(f"**Window:** {self.time_window_minutes} minutes")
 
-        message = "  \n".join(message_parts)
+        message = " \n".join(message_parts)
 
         # Check if script wants to send raw data
         if self.wants_raw_data:
+            all_sab_vars = {k: v for k, v in os.environ.items() if k.startswith('SAB_')}
             raw_data = {
                 "title": title,
                 "message": message,
@@ -477,25 +201,16 @@ class PreQueueLoopPrevention:
                 "duplicate_timestamp": self.duplicate_timestamp,
                 "duplicate_age_minutes": minutes_ago,
                 "duplicate_age_seconds": self.current_time - self.duplicate_timestamp if self.duplicate_timestamp else None,
-                "blocked_instance": blocked_instance,
                 "time_window_minutes": self.time_window_minutes,
                 "timestamp": self.current_time,
-                "all_env_vars": self._get_all_env_vars(),
+                "all_env_vars": all_sab_vars,
             }
             self.notifier.send_notification_raw(raw_data)
         else:
             self.notifier.send_notification(title, message)
 
     def print_sabnzbd_response(self, accept: bool = True) -> None:
-        """
-        Print SABnzbd pre-queue response.
-
-        Args:
-            accept: Whether to accept (True) or reject (False) the download
-
-        Returns:
-            None
-        """
+        """Print SABnzbd pre-queue response."""
         if accept:
             for _ in range(7):
                 print("")
@@ -504,13 +219,38 @@ class PreQueueLoopPrevention:
             for _ in range(6):
                 print("")
 
-    def run(self) -> None:
-        """
-        Main execution method for pre-queue script.
+    def _spawn_blocker_subprocess(self) -> None:
+        """Spawn blocker subprocess asynchronously."""
+        try:
+            task_data = {
+                "sabnzbd_api_url": self.sabnzbd_api_url,
+                "sabnzbd_api_key": self.sabnzbd_api_key,
+                "radarr_instances": self.radarr_instances,
+                "sonarr_instances": self.sonarr_instances,
+                "nzb_name": self.nzb_name,
+                "log_file": self.config.get("log_file"),
+                "verify_ssl": self.verify_ssl
+            }
 
-        Returns:
-            None
-        """
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            blocker_script = os.path.join(script_dir, "queue_blocker_task.py")
+
+            self.log("Spawning blocker subprocess")
+
+            subprocess.Popen(
+                [sys.executable, blocker_script, json.dumps(task_data)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+
+            self.log("Blocker subprocess spawned successfully")
+        except Exception as e:
+            self.log(f"Error spawning blocker: {e}", LogLevel.ERROR)
+            self.log(traceback.format_exc(), LogLevel.ERROR)
+
+    def run(self) -> None:
+        """Main execution method for pre-queue script."""
         self.log(f"[PRE-QUEUE] Processing: {self.nzb_name} (Category: {self.category})")
 
         # Check if this category should be ignored
@@ -518,42 +258,40 @@ class PreQueueLoopPrevention:
         ignore_no_category = self.config.get("ignore_no_category", False)
 
         if self.category and self.category in ignored_categories:
-            self.log(f"Category '{self.category}' is in ignored list - accepting download without loop check", LogLevel.INFO)
+            self.log(f"Category '{self.category}' is in ignored list - accepting without loop check", LogLevel.INFO)
             self.print_sabnzbd_response(accept=True)
             return
 
         if not self.category and ignore_no_category:
-            self.log("Download has no category and ignore_no_category is enabled - accepting download without loop check", LogLevel.INFO)
+            self.log("Download has no category - accepting without loop check", LogLevel.INFO)
             self.print_sabnzbd_response(accept=True)
             return
 
         # Clean old entries
         clean_old_entries(self.history_file, self.time_window_seconds, self.current_time)
 
-        if self.check_duplicate():
-            self.print_sabnzbd_response(accept=False)
+        # Check for duplicates
+        is_duplicate = self.check_duplicate()
+
+        if is_duplicate:
+            # Duplicate detected
             self.log("BLOCKING: Duplicate detected")
 
-            blocked_instance = None
-
-            # Only block in *arr if status is SUCCESS
-            if self.duplicate_status == "SUCCESS":
-                success, instance_info = self.try_block_in_instances(self.radarr_instances, "Radarr")
-                if success:
-                    blocked_instance = instance_info
-                else:
-                    success, instance_info = self.try_block_in_instances(self.sonarr_instances, "Sonarr")
-                    if success:
-                        blocked_instance = instance_info
+            if self.duplicate_status == DownloadStatus.SUCCESS.value:
+                self.log(f"Status is {DownloadStatus.SUCCESS.value} - accepting into SABnzbd and spawning blocker")
+                self.print_sabnzbd_response(accept=True)
+                self._spawn_blocker_subprocess()
             else:
-                self.log(f"Status is {self.duplicate_status} - not removing from *arr")
+                self.log(f"Status is {self.duplicate_status} - rejecting from SABnzbd")
+                self.print_sabnzbd_response(accept=False)
 
-            self.send_block_notification(blocked_instance)
+            self.send_block_notification()
             sys.exit(0)
 
         else:
+            # Not a duplicate - add to history and accept
             self.add_to_history()
-            self.log(f"ACCEPTED: Added with PENDING status")
+            self.log(f"ACCEPTED: Added with {DownloadStatus.PENDING.value} status")
             self.print_sabnzbd_response(accept=True)
             sys.exit(0)
 
@@ -562,11 +300,9 @@ if __name__ == "__main__":
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         config_file = os.path.join(script_dir, "prevent_download_loops.json")
-
         config_loader = ConfigLoader(config_file)
         script = PreQueueLoopPrevention(config_loader.config)
         script.run()
-
     except Exception as e:
         sys.stderr.write(f"CRITICAL ERROR: {e}{os.linesep}")
         sys.stderr.write(traceback.format_exc())
