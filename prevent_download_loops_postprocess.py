@@ -281,7 +281,7 @@ class PostProcessLoopPrevention:
         if not updated:
             message_parts.append(f"**Warning:** History entry not found (may not be tracked)")
 
-        message = "  \n".join(message_parts)
+        message = "\\\n".join(message_parts)
 
         # Check if script wants to send raw data
         if self.wants_raw_data:

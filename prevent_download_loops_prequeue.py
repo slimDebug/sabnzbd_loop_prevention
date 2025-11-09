@@ -184,7 +184,7 @@ class PreQueueLoopPrevention:
         message_parts.append(f"**Action:** Background subprocess blocking (pause + queue removal)")
         message_parts.append(f"**Window:** {self.time_window_minutes} minutes")
 
-        message = " \n".join(message_parts)
+        message = "\\\n".join(message_parts)
 
         # Check if script wants to send raw data
         if self.wants_raw_data:
@@ -228,7 +228,10 @@ class PreQueueLoopPrevention:
                 "radarr_instances": self.radarr_instances,
                 "sonarr_instances": self.sonarr_instances,
                 "nzb_name": self.nzb_name,
-                "log_file": self.config.get("log_file"),
+                "log_file": self.logger.log_file,
+                "max_log_size_mb": self.logger.max_size_mb,
+                "max_log_backups": self.logger.max_backups,
+                "log_level": self.logger.log_level.value,
                 "verify_ssl": self.verify_ssl
             }
 

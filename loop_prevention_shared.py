@@ -56,7 +56,6 @@ class LogLevel(Enum):
 
 class DownloadStatus(Enum):
     """Enumeration for download status in history."""
-
     PENDING = "PENDING"
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"

@@ -184,15 +184,18 @@ def main():
         sonarr_instances = task_data.get("sonarr_instances", [])
         nzb_name = task_data.get("nzb_name")
         log_file = task_data.get("log_file")
+        max_log_size_mb = task_data.get("max_log_size_mb")
+        max_log_backups = task_data.get("max_log_backups")
+        log_level = task_data.get("log_level", LogLevel.INFO.value)
         verify_ssl = task_data.get("verify_ssl", False)
         arr_block_delay = 10
 
         # Initialize logger
         logger = Logger(
             log_file=log_file,
-            max_size_mb=10,
-            max_backups=3,
-            log_level=LogLevel.ALL
+            max_size_mb=max_log_size_mb,
+            max_backups=max_log_backups,
+            log_level=LogLevel[log_level]
         )
 
         ssl_context = setup_ssl_context(verify_ssl)
